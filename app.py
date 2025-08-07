@@ -159,6 +159,19 @@ def main():
         
         [![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/hasanmehmood)
         """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.header("🤝 Contribute")
+        st.markdown("""
+        **Found a bug or have a feature request?**
+        
+        [![Repository](https://img.shields.io/badge/Repository-address--mapper-blue?style=for-the-badge&logo=github)](https://github.com/hasanmehmood/address-mapper)
+        
+        - 🐛 Report issues
+        - ⭐ Star the repo
+        - 🔀 Submit pull requests
+        - 💡 Suggest improvements
+        """, unsafe_allow_html=True)
     
     # File upload
     uploaded_file = st.file_uploader(
@@ -281,10 +294,11 @@ def main():
             <p style='margin: 0; color: #666; font-size: 14px;'>
                 Built with ❤️ by <strong>Hassan Mehmood</strong> | 
                 <a href='https://www.linkedin.com/in/hasanmehmood/' target='_blank' style='text-decoration: none; color: #0077B5;'>LinkedIn</a> | 
-                <a href='https://github.com/hasanmehmood' target='_blank' style='text-decoration: none; color: #333;'>GitHub</a>
+                <a href='https://github.com/hasanmehmood' target='_blank' style='text-decoration: none; color: #333;'>GitHub</a> | 
+                <a href='https://github.com/hasanmehmood/address-mapper' target='_blank' style='text-decoration: none; color: #28a745;'>⭐ Repository</a>
             </p>
             <p style='margin: 5px 0 0 0; color: #888; font-size: 12px;'>
-                Streamlit Address Mapper - Convert addresses to interactive maps
+                Streamlit Address Mapper - Convert addresses to interactive maps | Open Source & MIT Licensed
             </p>
         </div>
         """, 
