@@ -17,28 +17,26 @@ st.set_page_config(
 def init_geocoder():
     return Nominatim(user_agent="streamlit_address_mapper")
 
-def geocode_address(geocoder, full_address):
+def geocode_zipcode(geocoder, zipcode):
     """
-    Geocode a full address string and return lat, lon coordinates
+    Geocode a zipcode and return lat, lon coordinates
     """
     try:
-        location = geocoder.geocode(full_address, timeout=10)
+        # Add "USA" to improve geocoding accuracy for US zipcodes
+        location = geocoder.geocode(f"{zipcode}, USA", timeout=10)
         if location:
             return location.latitude, location.longitude
         else:
             return None, None
     except Exception as e:
-        st.warning(f"Geocoding error for '{full_address}': {str(e)}")
+        st.warning(f"Geocoding error for zipcode '{zipcode}': {str(e)}")
         return None, None
 
-def process_csv_addresses(df):
+def process_csv_zipcodes(df):
     """
-    Process the CSV dataframe and geocode addresses
+    Process the CSV dataframe and geocode zipcodes
     """
     geocoder = init_geocoder()
-    
-    # Create full address column
-    df['full_address'] = df.apply(lambda row: f"{row['street']}, {row['city']}, {row['state']} {row['zipcode']}", axis=1)
     
     # Initialize coordinate columns
     df['latitude'] = None
@@ -52,9 +50,9 @@ def process_csv_addresses(df):
     successful_geocodes = 0
     
     for index, row in df.iterrows():
-        status_text.text(f'Geocoding address {index + 1} of {len(df)}: {row["full_address"]}')
+        status_text.text(f'Geocoding zipcode {index + 1} of {len(df)}: {row["zipcode"]}')
         
-        lat, lon = geocode_address(geocoder, row['full_address'])
+        lat, lon = geocode_zipcode(geocoder, row['zipcode'])
         
         if lat and lon:
             df.at[index, 'latitude'] = lat
@@ -70,13 +68,13 @@ def process_csv_addresses(df):
         # Add small delay to be respectful to the geocoding service
         time.sleep(0.1)
     
-    status_text.text(f'Geocoding complete! Successfully geocoded {successful_geocodes} out of {len(df)} addresses.')
+    status_text.text(f'Geocoding complete! Successfully geocoded {successful_geocodes} out of {len(df)} zipcodes.')
     
     return df
 
 def create_map(df):
     """
-    Create a Folium map with markers for all geocoded addresses
+    Create a Folium map with variable-sized markers for zipcodes based on household count
     """
     # Filter out failed geocodes
     valid_coords = df.dropna(subset=['latitude', 'longitude'])
@@ -92,58 +90,119 @@ def create_map(df):
     # Create the map with larger dimensions
     m = folium.Map(
         location=[center_lat, center_lon], 
-        zoom_start=10,
+        zoom_start=8,
         width='100%',
         height='100%'
     )
     
-    # Add markers for each address
+    # Calculate marker sizes based on household count
+    min_households = valid_coords['no_of_households'].min()
+    max_households = valid_coords['no_of_households'].max()
+    
+    # Add circles for each zipcode with variable sizes
     for index, row in valid_coords.iterrows():
+        # Calculate radius based on household count (scale between 5 and 50)
+        if max_households > min_households:
+            normalized_size = (row['no_of_households'] - min_households) / (max_households - min_households)
+            radius = 5 + (normalized_size * 45)  # Scale between 5 and 50
+        else:
+            radius = 25  # Default size if all values are the same
+        
+        # Color intensity based on household count
+        if normalized_size >= 0.8:
+            color = '#d73027'  # Dark red for highest
+        elif normalized_size >= 0.6:
+            color = '#f46d43'  # Orange-red
+        elif normalized_size >= 0.4:
+            color = '#fdae61'  # Orange
+        elif normalized_size >= 0.2:
+            color = '#fee08b'  # Light orange
+        else:
+            color = '#e0f3f8'  # Light blue for lowest
+        
         popup_text = f"""
-        <b>Account ID:</b> {row['account_id']}<br>
-        <b>Address:</b> {row['full_address']}<br>
-        <b>Coordinates:</b> {row['latitude']:.6f}, {row['longitude']:.6f}
+        <div style="font-family: Arial, sans-serif;">
+            <h4 style="margin: 0; color: #333;">Zipcode: {row['zipcode']}</h4>
+            <p style="margin: 5px 0;"><b>Households:</b> {row['no_of_households']:,}</p>
+            <p style="margin: 5px 0;"><b>Coordinates:</b> {row['latitude']:.4f}, {row['longitude']:.4f}</p>
+        </div>
         """
         
+        # Add circle marker
+        folium.CircleMarker(
+            location=[row['latitude'], row['longitude']],
+            radius=radius,
+            popup=folium.Popup(popup_text, max_width=250),
+            tooltip=f"Zipcode: {row['zipcode']} | Households: {row['no_of_households']:,}",
+            color='#333333',
+            weight=2,
+            fillColor=color,
+            fillOpacity=0.7
+        ).add_to(m)
+        
+        # Add household count label on the circle
+        # Format the number for better readability
+        if row['no_of_households'] >= 1000:
+            count_label = f"{row['no_of_households']/1000:.1f}K"
+        else:
+            count_label = str(row['no_of_households'])
+            
         folium.Marker(
             location=[row['latitude'], row['longitude']],
-            popup=folium.Popup(popup_text, max_width=300),
-            tooltip=f"Account: {row['account_id']}",
-            icon=folium.Icon(color='red', icon='home')
+            icon=folium.DivIcon(
+                html=f'<div style="font-size: 11px; font-weight: bold; color: white; text-shadow: 1px 1px 2px black; text-align: center; line-height: 1;">{count_label}</div>',
+                icon_size=(50, 20),
+                icon_anchor=(25, 10)
+            )
         ).add_to(m)
+    
+    # Add a legend
+    legend_html = f'''
+    <div style="position: fixed; 
+                bottom: 50px; left: 50px; width: 200px; height: 120px; 
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 10px;">
+    <h4 style="margin: 0 0 10px 0;">Household Count</h4>
+    <i style="background:#d73027; width: 15px; height: 15px; float: left; margin-right: 8px; border-radius: 50%;"></i>
+    High ({max_households:,})<br>
+    <i style="background:#fdae61; width: 15px; height: 15px; float: left; margin-right: 8px; border-radius: 50%; margin-top: 5px;"></i>
+    Medium<br>
+    <i style="background:#e0f3f8; width: 15px; height: 15px; float: left; margin-right: 8px; border-radius: 50%; margin-top: 5px;"></i>
+    Low ({min_households:,})<br>
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
     
     return m
 
 def main():
-    st.title("🗺️ Address Mapper")
-    st.markdown("Upload a CSV file with addresses and visualize them on Google Maps!")
+    st.title("🗺️ Zipcode Household Mapper")
+    st.markdown("Upload a CSV file with zipcodes and household counts to visualize them on an interactive map!")
     
     # Sidebar for instructions
     with st.sidebar:
         st.header("📋 Instructions")
         st.markdown("""
         1. **Upload CSV File**: Your CSV should contain columns:
-           - `account_id`: Unique identifier
-           - `street`: Street address
-           - `city`: City name
-           - `state`: State/Province
-           - `zipcode`: ZIP/Postal code
+           - `zipcode`: ZIP/Postal code (e.g., 10001)
+           - `no_of_households`: Number of households in that zipcode
         
         2. **View Results**: The app will:
-           - Geocode each address to get coordinates
-           - Show a summary of successful/failed geocoding
-           - Display all locations on an interactive map
+           - Geocode each zipcode to get coordinates
+           - Show variable-sized circles based on household count
+           - Display color-coded markers (red = high, blue = low)
+           - Show zipcode labels on the map
         
-        3. **Download Results**: Get the processed data with coordinates
+        3. **Interactive Features**:
+           - Click circles for detailed popup info
+           - Hover for quick household count
+           - Legend shows household count ranges
         """)
         
         st.header("📝 Sample CSV Format")
         sample_data = {
-            'account_id': ['ACC001', 'ACC002'],
-            'street': ['1600 Amphitheatre Parkway', '1 Apple Park Way'],
-            'city': ['Mountain View', 'Cupertino'],
-            'state': ['CA', 'CA'],
-            'zipcode': ['94043', '95014']
+            'zipcode': ['10001', '90210', '94043'],
+            'no_of_households': [2500, 1800, 3200]
         }
         sample_df = pd.DataFrame(sample_data)
         st.dataframe(sample_df, use_container_width=True)
@@ -186,24 +245,24 @@ def main():
             df = pd.read_csv(uploaded_file)
             
             # Validate required columns
-            required_columns = ['account_id', 'street', 'city', 'state', 'zipcode']
+            required_columns = ['zipcode', 'no_of_households']
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
                 st.error(f"Missing required columns: {', '.join(missing_columns)}")
-                st.info("Please ensure your CSV has all required columns: account_id, street, city, state, zipcode")
+                st.info("Please ensure your CSV has all required columns: zipcode, no_of_households")
                 return
             
             # Display uploaded data
             st.subheader("📊 Uploaded Data")
             st.dataframe(df, use_container_width=True)
-            st.info(f"Found {len(df)} addresses to process")
+            st.info(f"Found {len(df)} zipcodes to process")
             
-            # Process addresses button
-            if st.button("🚀 Process Addresses and Create Map", type="primary"):
-                with st.spinner("Processing addresses..."):
-                    # Process the addresses
-                    processed_df = process_csv_addresses(df.copy())
+            # Process zipcodes button
+            if st.button("🚀 Process Zipcodes and Create Map", type="primary"):
+                with st.spinner("Processing zipcodes..."):
+                    # Process the zipcodes
+                    processed_df = process_csv_zipcodes(df.copy())
                     
                     # Store in session state for later use
                     st.session_state['processed_data'] = processed_df
@@ -214,24 +273,27 @@ def main():
                 success_count = len(processed_df[processed_df['geocoding_status'] == 'Success'])
                 failed_count = len(processed_df[processed_df['geocoding_status'] == 'Failed'])
                 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("Total Addresses", len(processed_df))
+                    st.metric("Total Zipcodes", len(processed_df))
                 with col2:
                     st.metric("Successfully Geocoded", success_count)
                 with col3:
                     st.metric("Failed to Geocode", failed_count)
+                with col4:
+                    total_households = processed_df[processed_df['geocoding_status'] == 'Success']['no_of_households'].sum()
+                    st.metric("Total Households", f"{total_households:,}")
                 
-                # Show failed addresses if any
+                # Show failed zipcodes if any
                 if failed_count > 0:
-                    st.warning(f"{failed_count} addresses could not be geocoded")
-                    failed_addresses = processed_df[processed_df['geocoding_status'] == 'Failed']
-                    with st.expander("View Failed Addresses"):
-                        st.dataframe(failed_addresses[['account_id', 'full_address']], use_container_width=True)
+                    st.warning(f"{failed_count} zipcodes could not be geocoded")
+                    failed_zipcodes = processed_df[processed_df['geocoding_status'] == 'Failed']
+                    with st.expander("View Failed Zipcodes"):
+                        st.dataframe(failed_zipcodes[['zipcode', 'no_of_households']], use_container_width=True)
                 
                 # Create and display map
                 if success_count > 0:
-                    st.subheader("🗺️ Address Map")
+                    st.subheader("🗺️ Zipcode Household Map")
                     map_obj = create_map(processed_df)
                     
                     if map_obj:
@@ -254,7 +316,7 @@ def main():
                         st.download_button(
                             label="📥 Download Processed Data (CSV)",
                             data=csv_data,
-                            file_name="geocoded_addresses.csv",
+                            file_name="geocoded_zipcodes.csv",
                             mime="text/csv"
                         )
                         
@@ -262,7 +324,7 @@ def main():
                         with st.expander("View Processed Data"):
                             st.dataframe(processed_df, use_container_width=True)
                 else:
-                    st.error("No addresses were successfully geocoded. Please check your address data.")
+                    st.error("No zipcodes were successfully geocoded. Please check your zipcode data.")
         
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
@@ -277,11 +339,8 @@ def main():
         st.markdown("Here's what your CSV file should look like:")
         
         example_data = {
-            'account_id': ['ACC001', 'ACC002', 'ACC003'],
-            'street': ['1600 Amphitheatre Parkway', '1 Apple Park Way', '350 5th Ave'],
-            'city': ['Mountain View', 'Cupertino', 'New York'],
-            'state': ['CA', 'CA', 'NY'],
-            'zipcode': ['94043', '95014', '10118']
+            'zipcode': ['10001', '90210', '94043', '60601', '33101'],
+            'no_of_households': [2500, 1800, 3200, 4100, 2900]
         }
         example_df = pd.DataFrame(example_data)
         st.dataframe(example_df, use_container_width=True)
